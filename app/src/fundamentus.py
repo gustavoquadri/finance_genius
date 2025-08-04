@@ -2,6 +2,7 @@ import re
 import urllib.request
 import urllib.parse
 import http.cookiejar
+import requests
 from lxml.html import fragment_fromstring
 from collections import OrderedDict
 from decimal import Decimal
@@ -18,25 +19,20 @@ class FundamentusScraper:
 
 
 def get_stocks(*args, **kwargs):
-    url_stocks = 'http://www.fundamentus.com.br/resultado.php'  # url para ação
-    opener = FundamentusScraper()  # simula um navegador, irá guardar os cookies do site
+    url_stocks = 'http://www.fundamentus.com.br/resultado.php'
+    opener = FundamentusScraper()
 
-    # filtro para busca, não é 100% necessário, diminui o raio caso queira algo mais especifico
     data = {
-        'negociada': 'ON,PN',  # inclui ações ordinárias e preferenciais
-        'ordem': '1'           # mantém a ordem padrão
+        'negociada': 'ON,PN',
+        'ordem': '1'
     }
 
-    with opener.opener.open(url_stocks, urllib.parse.urlencode(data).encode('UTF-8')) as link:  # faz a conexão com o site
-        content = link.read().decode('ISO-8859-1')  # guarda o resultado em uma variavel
+    with opener.opener.open(url_stocks, urllib.parse.urlencode(data).encode('UTF-8')) as link:
+        content = link.read().decode('ISO-8859-1')
 
-    # compula um padrao de expressao regular, procura no HTML uma tabela id="resultado", pega qualquer caractere, até encontrar o final da tabela (</table>) e o re.DOTALL captura as quebras de linha
     pattern = re.compile('<table id="resultado".*</table>', re.DOTALL)
-    # procura todas as ocorrencias do pattern no content
     content = re.findall(pattern, content)[0]
-    # converte o html para uma string
     page = fragment_fromstring(content)
-    # cria o dicionario que irá armazenar o conteudo final
     result = OrderedDict()
 
     for rows in page.xpath('tbody')[0].findall("tr"):
@@ -68,6 +64,43 @@ def get_reits(*args, **kwargs):
     return result
 
 
+def get_treasuries(*args, **kwargs):
+    url = 'https://www.tesourodireto.com.br/json/br/com/b3/tesourodireto/service/api/treasurybondsinfo.json'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Referer': 'https://www.tesourodireto.com.br/titulos/precos-e-taxas.htm'
+    }
+
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()
+
+    titulos = data['response']['TrsrBdTradgList']
+    result = OrderedDict()
+
+    for item in titulos:
+        nome = item['TrsrBd']['nm']
+
+        vencimento = str(item['TrsrBd'].get('mtrtyDt', 0))
+        taxa_compra = Decimal(str(item['TrsrBd'].get('anulInvstmtRate', 0)))
+        inv_minimo = Decimal(str(item['TrsrBd'].get('minInvstmtAmt', 0)))
+        preco_unit = Decimal(str(item['TrsrBd'].get('untrInvstmtVal', 0)))
+        pu_resgate = Decimal(str(item['TrsrBd'].get('untrRedVal', 0)))
+        rent_anual = Decimal(str(item['TrsrBd'].get('anulRedRate', 0)))
+
+        result[nome] = {
+            'Vencimento': vencimento,
+            'Taxa de Compra': taxa_compra,
+            'Investimento Minimo': inv_minimo,
+            'Preco Unitario': preco_unit,
+            'Preco Venda Antes Da Hora': pu_resgate,
+            'Rentabilidade Anual': rent_anual
+        }
+
+    return result
+
+
 def todecimal(string):
     string = string.replace('.', '')
     string = string.replace(',', '.')
@@ -85,6 +118,12 @@ if __name__ == '__main__':
 
     result_reits = get_reits()
 
+    result_treasuries = get_treasuries()
+
+    print(f"tesouro ipca+ com juros semestrais 2035: \n\
+preco:  {result_treasuries['Tesouro IPCA+ com Juros Semestrais 2035']['Preco Unitario']}\n\
+rentabilidade: {result_treasuries['Tesouro IPCA+ com Juros Semestrais 2035']['Rentabilidade Anual']}")
+    print("\n")
     print(f"petrobras: \n\
 cotacao: {result_stocks['PETR4']['Cotacao']}\n\
 div.yield: {result_stocks['PETR4']['Div.Yield']}\n\
